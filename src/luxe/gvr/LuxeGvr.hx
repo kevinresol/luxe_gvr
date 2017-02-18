@@ -21,6 +21,8 @@ class LuxeGvr {
 	var originalTargetSize:Vector;
 	var originalRenderPath:RenderPath;
 	
+	static var TO_RADIANS = Math.PI / 180;
+	
 	public function new() {
 		var viewportSize = {
 			w: Luxe.screen.width / 2,
@@ -36,7 +38,6 @@ class LuxeGvr {
 		var size = Gvr.swapChainGetBufferSize(swapChain, 0);
 		viewportSize.w = size.width / 2;
 		viewportSize.h = size.height;
-		trace(viewportSize);
 		Luxe.renderer.state.bindFramebuffer();
 		Luxe.renderer.state.bindRenderbuffer();
 		
@@ -44,7 +45,6 @@ class LuxeGvr {
 		headInverse = new Matrix();
 		
 		cameras = [
-			// Luxe.camera,
 			new Camera({
 				name: 'left_eye',
 				viewport: new Rectangle(0, 0, viewportSize.w, viewportSize.h),
@@ -54,12 +54,9 @@ class LuxeGvr {
 				name: 'right_eye',
 				viewport: new Rectangle(viewportSize.w, 0, viewportSize.w, viewportSize.h),
 				projection: custom,
-				// projection: perspective,
-				// fov: 90,
-				// far: 1000, near: -0,
-				// aspect: 1,
 			}),
 		];
+		
 		originalRenderPath = Luxe.renderer.render_path;
 		originalTargetSize = Luxe.renderer.target_size.clone();
 		Luxe.renderer.render_path = new VrRenderPath(Luxe.renderer, cameras);
@@ -131,10 +128,10 @@ class LuxeGvr {
 	
 	function perspective(fov:Rectf, z_near:Float, z_far:Float) {
 
-		var x_left = -Math.tan(fov.left * Math.PI / 180.0) * z_near;
-		var x_right = Math.tan(fov.right * Math.PI / 180.0) * z_near;
-		var y_bottom = -Math.tan(fov.bottom * Math.PI / 180.0) * z_near;
-		var y_top = Math.tan(fov.top * Math.PI / 180.0) * z_near;
+		var x_left = -Math.tan(fov.left * TO_RADIANS) * z_near;
+		var x_right = Math.tan(fov.right * TO_RADIANS) * z_near;
+		var y_bottom = -Math.tan(fov.bottom * TO_RADIANS) * z_near;
+		var y_top = Math.tan(fov.top * TO_RADIANS) * z_near;
 		
 		var X = (2 * z_near) / (x_right - x_left);
 		var Y = (2 * z_near) / (y_top - y_bottom);
