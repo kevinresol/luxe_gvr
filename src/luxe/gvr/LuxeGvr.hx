@@ -59,7 +59,7 @@ class LuxeGvr {
 		
 		originalRenderPath = Luxe.renderer.render_path;
 		originalTargetSize = Luxe.renderer.target_size.clone();
-		Luxe.renderer.render_path = new VrRenderPath(Luxe.renderer, cameras);
+		Luxe.renderer.render_path = new GvrRenderPath(Luxe.renderer, Luxe.camera, cameras[0], cameras[1]);
 		Luxe.renderer.target_size.y = viewportSize.h;
 		
 		Luxe.on(luxe.Ev.tickstart, ontickstart);
