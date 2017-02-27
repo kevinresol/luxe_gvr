@@ -10,6 +10,7 @@ import luxe.*;
 class LuxeGvr {
 	public var headMatrix:Matrix;
 	public var headInverse:Matrix;
+	public var headDelta:Quaternion = new Quaternion();
 	public var mode(get, set):RenderMode;
 	
 	var cameras:Array<Camera>;
@@ -26,6 +27,8 @@ class LuxeGvr {
 	var originalRenderPath:RenderPath;
 	var originalCamera:Camera;
 	var renderPath:GvrRenderPath;
+	
+	var tempMatrix:Matrix = new Matrix();
 	
 	static var TO_RADIANS = Math.PI / 180;
 	
@@ -83,7 +86,9 @@ class LuxeGvr {
 		var time = Gvr.getTimePointNow();
 		head = Gvr.getHeadSpaceFromStartSpaceRotation(context, time);
 		
-		mat4fToMatrix(head, headMatrix);
+		headMatrix.makeRotationFromQuaternion(headDelta);
+		mat4fToMatrix(head, tempMatrix);
+		headMatrix.multiply(tempMatrix);
 		headInverse.getInverse(headMatrix);
 		
 		if(mode == Stereo) {
