@@ -8,11 +8,11 @@ import phoenix.Renderer;
 
 class GvrRenderPath extends phoenix.RenderPath {
 	
+	public var mode:RenderMode = Stereo;
+	
 	var head:Camera;
 	var leftEye:Camera;
 	var rightEye:Camera;
-	
-	var mode:RenderMode = Stereo;
 	
     public function new( _renderer:Renderer, head, left, right ) {
         super(_renderer);

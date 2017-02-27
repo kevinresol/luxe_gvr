@@ -2,12 +2,15 @@ package luxe.gvr;
 
 import cpp.*;
 import gvr.c.*;
+import snow.modules.opengl.GL;
 import phoenix.RenderPath;
+import luxe.gvr.GvrRenderPath;
 import luxe.*;
 
 class LuxeGvr {
 	public var headMatrix:Matrix;
 	public var headInverse:Matrix;
+	public var mode(get, set):RenderMode;
 	
 	var cameras:Array<Camera>;
 	var context:Context;
@@ -18,16 +21,17 @@ class LuxeGvr {
 	var frame:Frame;
 	var head:Mat4f;
 	
-	var originalTargetSize:Vector;
+	var monoTargetSize:Vector;
+	var stereoTargetSize:Vector;
 	var originalRenderPath:RenderPath;
+	var originalCamera:Camera;
+	var renderPath:GvrRenderPath;
 	
 	static var TO_RADIANS = Math.PI / 180;
 	
 	public function new() {
-		var viewportSize = {
-			w: Luxe.screen.width / 2,
-			h: Luxe.screen.h,
-		}
+		monoTargetSize = Luxe.renderer.target_size.clone();
+		stereoTargetSize = new Vector(Luxe.screen.width / 2, Luxe.screen.height);
 		
 		context = Gvr.create();
 		Gvr.initializeGl(context);
@@ -36,31 +40,37 @@ class LuxeGvr {
 		rightEyeViewport = Gvr.bufferViewportCreate(context);
 		swapChain = Gvr.swapChainCreate(context, 1);
 		var size = Gvr.swapChainGetBufferSize(swapChain, 0);
-		viewportSize.w = size.width / 2;
-		viewportSize.h = size.height;
+		stereoTargetSize.x = size.width / 2;
+		stereoTargetSize.y = size.height;
 		Luxe.renderer.state.bindFramebuffer();
 		Luxe.renderer.state.bindRenderbuffer();
 		
 		headMatrix = new Matrix();
 		headInverse = new Matrix();
 		
+		originalCamera = Luxe.camera;
+		Luxe.camera = new Camera({
+			name: 'head',
+			projection: phoenix.Camera.ProjectionType.perspective,
+			fov: 90, near: 0.1, far: 1000,
+			aspect: Luxe.screen.height / Luxe.screen.width,
+		});
+		Luxe.camera.view.cull_backfaces = false;
+		
 		cameras = [
 			new Camera({
 				name: 'left_eye',
-				viewport: new Rectangle(0, 0, viewportSize.w, viewportSize.h),
+				viewport: new Rectangle(0, 0, stereoTargetSize.x, stereoTargetSize.y),
 				projection: custom,
 			}),
 			new Camera({
 				name: 'right_eye',
-				viewport: new Rectangle(viewportSize.w, 0, viewportSize.w, viewportSize.h),
+				viewport: new Rectangle(stereoTargetSize.x, 0, stereoTargetSize.x, stereoTargetSize.y),
 				projection: custom,
 			}),
 		];
-		
 		originalRenderPath = Luxe.renderer.render_path;
-		originalTargetSize = Luxe.renderer.target_size.clone();
-		Luxe.renderer.render_path = new GvrRenderPath(Luxe.renderer, Luxe.camera, cameras[0], cameras[1]);
-		Luxe.renderer.target_size.y = viewportSize.h;
+		Luxe.renderer.render_path = renderPath = new GvrRenderPath(Luxe.renderer, Luxe.camera, cameras[0], cameras[1]);
 		
 		Luxe.on(luxe.Ev.tickstart, ontickstart);
 		Luxe.on(luxe.Ev.postrender, onpostrender);
@@ -70,39 +80,46 @@ class LuxeGvr {
 		Gvr.getRecommendedBufferViewports(context, viewportList);
 		Gvr.bufferViewportListGetItem(viewportList, 0, leftEyeViewport);
 		Gvr.bufferViewportListGetItem(viewportList, 1, rightEyeViewport);
-		frame = Gvr.swapChainAcquireFrame(swapChain);
 		var time = Gvr.getTimePointNow();
 		head = Gvr.getHeadSpaceFromStartSpaceRotation(context, time);
-		var leftEye = Gvr.getEyeFromHeadMatrix(context, 0);
-		var rightEye = Gvr.getEyeFromHeadMatrix(context, 1);
 		
 		mat4fToMatrix(head, headMatrix);
 		headInverse.getInverse(headMatrix);
-		var leftEyeMatrix = mat4fToMatrix(leftEye).multiply(headMatrix);
-		var rightEyeMatrix = mat4fToMatrix(rightEye).multiply(headMatrix);
 		
-		cameras[0].rotation.setFromRotationMatrix(leftEyeMatrix.inverse());
-		cameras[0].pos = new Vector().applyProjection(leftEyeMatrix);
-		cameras[1].rotation.setFromRotationMatrix(rightEyeMatrix.inverse());
-		cameras[1].pos = new Vector().applyProjection(rightEyeMatrix);
-		
-		cameras[0].view.projection_matrix = perspective(Gvr.bufferViewportGetSourceFov(leftEyeViewport), 0.1, 100);
-		cameras[0].view.proj_arr = cameras[0].view.projection_matrix.float32array();
-		cameras[1].view.projection_matrix = perspective(Gvr.bufferViewportGetSourceFov(rightEyeViewport), 0.1, 100);
-		cameras[1].view.proj_arr = cameras[1].view.projection_matrix.float32array();
-		
-		Gvr.frameBindBuffer(frame, 0);
-		opengl.WebGL.enable(opengl.GL.GL_DEPTH_TEST);
+		if(mode == Stereo) {
+			var leftEye = Gvr.getEyeFromHeadMatrix(context, 0);
+			var rightEye = Gvr.getEyeFromHeadMatrix(context, 1);
+			var leftEyeMatrix = mat4fToMatrix(leftEye).multiply(headMatrix);
+			var rightEyeMatrix = mat4fToMatrix(rightEye).multiply(headMatrix);
+			
+			cameras[0].rotation.setFromRotationMatrix(leftEyeMatrix.inverse());
+			cameras[0].pos.set_xyz(0, 0, 0).applyProjection(leftEyeMatrix);
+			cameras[1].rotation.setFromRotationMatrix(rightEyeMatrix.inverse());
+			cameras[1].pos.set_xyz(0, 0, 0).applyProjection(rightEyeMatrix);
+			
+			cameras[0].view.projection_matrix = perspective(Gvr.bufferViewportGetSourceFov(leftEyeViewport), 0.1, 100);
+			cameras[0].view.proj_arr = cameras[0].view.projection_matrix.float32array();
+			cameras[1].view.projection_matrix = perspective(Gvr.bufferViewportGetSourceFov(rightEyeViewport), 0.1, 100);
+			cameras[1].view.proj_arr = cameras[1].view.projection_matrix.float32array();
+			
+			frame = Gvr.swapChainAcquireFrame(swapChain);
+			Gvr.frameBindBuffer(frame, 0);
+			Luxe.renderer.state.enable(GL.DEPTH_TEST);
+		} else {
+			Luxe.camera.rotation.setFromRotationMatrix(headInverse);
+		}
 		
 		Luxe.renderer.blend_mode(src_alpha, one_minus_src_alpha);
 	}
 	
 	function onpostrender(_) {
-		Gvr.frameUnbind(frame);
-		Gvr.frameSubmit(frame, viewportList, head);
-		
-		Luxe.renderer.state.bindFramebuffer();
-		Luxe.renderer.state.bindRenderbuffer();
+		if(mode == Stereo) {
+			Gvr.frameUnbind(frame);
+			Gvr.frameSubmit(frame, viewportList, head);
+			
+			Luxe.renderer.state.bindFramebuffer();
+			Luxe.renderer.state.bindRenderbuffer();
+		}
 	}
 	
 	public function destroy() {
@@ -110,10 +127,14 @@ class LuxeGvr {
 		// Gvr.destroy(RawPointer.addressOf(context.raw));
 		// context = null;
 		
+		Luxe.camera.destroy();
+		while(cameras.length > 0) cameras.pop().destroy();
+		
+		Luxe.camera = originalCamera;
 		Luxe.off(luxe.Ev.tickstart, ontickstart);
 		Luxe.off(luxe.Ev.postrender, onpostrender);
 		Luxe.renderer.render_path = originalRenderPath;
-		Luxe.renderer.target_size.copy_from(originalTargetSize);
+		Luxe.renderer.target_size.copy_from(monoTargetSize);
 	}
 	
 	function mat4fToMatrix(matrix:Mat4f, ?into:Matrix) {
@@ -146,5 +167,16 @@ class LuxeGvr {
 			0, 0, C, D,
 			0, 0, -1, 0
 		);
+	}
+	
+	inline function get_mode()
+		return renderPath.mode;
+		
+	function set_mode(v) {
+		Luxe.renderer.target_size = switch v {
+			case Mono: monoTargetSize;
+			case Stereo: stereoTargetSize;
+		}
+		return renderPath.mode = v;
 	}
 }
