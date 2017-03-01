@@ -8,9 +8,7 @@ import luxe.gvr.GvrRenderPath;
 import luxe.*;
 
 class LuxeGvr {
-	public var headMatrix:Matrix;
-	public var headInverse:Matrix;
-	public var headDelta:Quaternion = new Quaternion();
+	public var head(default, null):Head;
 	public var mode(get, set):RenderMode;
 	
 	var cameras:Array<Camera>;
@@ -20,7 +18,7 @@ class LuxeGvr {
 	var rightEyeViewport:BufferViewport;
 	var swapChain:SwapChain;
 	var frame:Frame;
-	var head:Mat4f;
+	var rawHead:Mat4f;
 	
 	var monoTargetSize:Vector;
 	var stereoTargetSize:Vector;
@@ -48,8 +46,7 @@ class LuxeGvr {
 		Luxe.renderer.state.bindFramebuffer();
 		Luxe.renderer.state.bindRenderbuffer();
 		
-		headMatrix = new Matrix();
-		headInverse = new Matrix();
+		head = new Head();
 		
 		originalCamera = Luxe.camera;
 		Luxe.camera = new Camera({
@@ -57,19 +54,24 @@ class LuxeGvr {
 			projection: phoenix.Camera.ProjectionType.perspective,
 			fov: 90, near: 0.1, far: 1000,
 			aspect: Luxe.screen.height / Luxe.screen.width,
+			cull_backfaces: false,
+			depth_test: true,
 		});
-		Luxe.camera.view.cull_backfaces = false;
 		
 		cameras = [
 			new Camera({
 				name: 'left_eye',
 				viewport: new Rectangle(0, 0, stereoTargetSize.x, stereoTargetSize.y),
 				projection: custom,
+				cull_backfaces: false,
+				depth_test: true,
 			}),
 			new Camera({
 				name: 'right_eye',
 				viewport: new Rectangle(stereoTargetSize.x, 0, stereoTargetSize.x, stereoTargetSize.y),
 				projection: custom,
+				cull_backfaces: false,
+				depth_test: true,
 			}),
 		];
 		originalRenderPath = Luxe.renderer.render_path;
@@ -84,19 +86,18 @@ class LuxeGvr {
 		Gvr.bufferViewportListGetItem(viewportList, 0, leftEyeViewport);
 		Gvr.bufferViewportListGetItem(viewportList, 1, rightEyeViewport);
 		var time = Gvr.getTimePointNow();
-		head = Gvr.getHeadSpaceFromStartSpaceRotation(context, time);
+		rawHead = Gvr.getHeadSpaceFromStartSpaceRotation(context, time);
 		
-		headMatrix.makeRotationFromQuaternion(headDelta);
-		mat4fToMatrix(head, tempMatrix);
-		headMatrix.multiply(tempMatrix);
-		headInverse.getInverse(headMatrix);
+		
+		mat4fToMatrix(rawHead, head.raw);
+		head.refresh();
 		
 		if(mode == Stereo) {
 			var leftEye = Gvr.getEyeFromHeadMatrix(context, 0);
 			var rightEye = Gvr.getEyeFromHeadMatrix(context, 1);
-			var leftEyeMatrix = mat4fToMatrix(leftEye).multiply(headMatrix);
-			var rightEyeMatrix = mat4fToMatrix(rightEye).multiply(headMatrix);
-			
+			var leftEyeMatrix = mat4fToMatrix(leftEye).multiply(head.matrix);
+			var rightEyeMatrix = mat4fToMatrix(rightEye).multiply(head.matrix);
+		
 			cameras[0].rotation.setFromRotationMatrix(leftEyeMatrix.inverse());
 			cameras[0].pos.set_xyz(0, 0, 0).applyProjection(leftEyeMatrix);
 			cameras[1].rotation.setFromRotationMatrix(rightEyeMatrix.inverse());
@@ -106,12 +107,14 @@ class LuxeGvr {
 			cameras[0].view.proj_arr = cameras[0].view.projection_matrix.float32array();
 			cameras[1].view.projection_matrix = perspective(Gvr.bufferViewportGetSourceFov(rightEyeViewport), 0.1, 100);
 			cameras[1].view.proj_arr = cameras[1].view.projection_matrix.float32array();
+			cameras[0].view.depth_test = cameras[1].view.depth_test = true;
+			@:privateAccess Luxe.renderer.state.depth_test = false;
 			
 			frame = Gvr.swapChainAcquireFrame(swapChain);
 			Gvr.frameBindBuffer(frame, 0);
-			Luxe.renderer.state.enable(GL.DEPTH_TEST);
 		} else {
-			Luxe.camera.rotation.setFromRotationMatrix(headInverse);
+			Luxe.camera.rotation.setFromRotationMatrix(head.inverse);
+			Luxe.camera.view.depth_test = true;
 		}
 		
 		Luxe.renderer.blend_mode(src_alpha, one_minus_src_alpha);
@@ -120,7 +123,7 @@ class LuxeGvr {
 	function onpostrender(_) {
 		if(mode == Stereo) {
 			Gvr.frameUnbind(frame);
-			Gvr.frameSubmit(frame, viewportList, head);
+			Gvr.frameSubmit(frame, viewportList, rawHead);
 			
 			Luxe.renderer.state.bindFramebuffer();
 			Luxe.renderer.state.bindRenderbuffer();
@@ -183,5 +186,47 @@ class LuxeGvr {
 			case Stereo: stereoTargetSize;
 		}
 		return renderPath.mode = v;
+	}
+}
+
+private class Head {
+	public var raw(default, null):Matrix;
+	public var inverse(default, null):Matrix;
+	public var transform(default, null):HeadTransform; // extra transform applied on head
+	public var matrix(default, null):Matrix;
+	public var azimuth(default, null):Float;
+	public var elevation(default, null):Float;
+	
+	var vec = new Vector();
+	
+	public function new() {
+		raw = new Matrix();
+		matrix = new Matrix();
+		inverse = new Matrix();
+		transform = new HeadTransform();
+		azimuth = elevation = 0;
+	}
+	
+	public function refresh() {
+		matrix.copy(transform.local).multiply(raw).multiply(transform.global);
+		inverse.getInverse(matrix);
+		
+		var te = inverse.elements;
+		var m11 = te[0], m12 = te[4], m13 = te[8];
+		var m21 = te[1], m22 = te[5], m23 = te[9];
+		var m31 = te[2], m32 = te[6], m33 = te[10];
+	
+		elevation = Math.abs(m12) < 0.99999 ? Math.atan2(m32, m22) : Math.atan2(-m23, m33);
+		azimuth = Math.abs(m23) < 0.99999 ? Math.atan2(m13, m33) : Math.atan2(-m31, m11);
+	}
+}
+
+private class HeadTransform {
+	public var global(default, null):Matrix; // in world coordinate
+	public var local(default, null):Matrix; // in rawHead's coordinate
+	
+	public function new() {
+		global = new Matrix();
+		local = new Matrix();
 	}
 }
