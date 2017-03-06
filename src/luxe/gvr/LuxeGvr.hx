@@ -3,13 +3,17 @@ package luxe.gvr;
 import cpp.*;
 import gvr.c.*;
 import snow.modules.opengl.GL;
+import snow.types.Types;
+import phoenix.Renderer;
 import phoenix.RenderPath;
+import phoenix.RenderState;
 import luxe.gvr.GvrRenderPath;
 import luxe.*;
 
 class LuxeGvr {
 	public var head(default, null):Head;
 	public var mode(get, set):RenderMode;
+	public var orientation(default, set):Orientation;
 	
 	var cameras:Array<Camera>;
 	var context:Context;
@@ -20,40 +24,40 @@ class LuxeGvr {
 	var frame:Frame;
 	var rawHead:Mat4f;
 	
-	var monoTargetSize:Vector;
-	var stereoTargetSize:Vector;
 	var originalRenderPath:RenderPath;
 	var originalCamera:Camera;
 	var renderPath:GvrRenderPath;
+	var monoTarget:MonoRenderTarget;
+	var stereoTarget:GvrRenderTarget;
 	
 	var tempMatrix:Matrix = new Matrix();
+	var landscapeInited = false;
 	
 	static var TO_RADIANS = Math.PI / 180;
 	
 	public function new() {
-		monoTargetSize = Luxe.renderer.target_size.clone();
-		stereoTargetSize = new Vector(Luxe.screen.width / 2, Luxe.screen.height);
 		
+		#if !android
 		context = Gvr.create();
+		#end
 		Gvr.initializeGl(context);
 		viewportList = Gvr.bufferViewportListCreate(context);
 		leftEyeViewport = Gvr.bufferViewportCreate(context);
 		rightEyeViewport = Gvr.bufferViewportCreate(context);
 		swapChain = Gvr.swapChainCreate(context, 1);
-		var size = Gvr.swapChainGetBufferSize(swapChain, 0);
-		stereoTargetSize.x = size.width / 2;
-		stereoTargetSize.y = size.height;
 		Luxe.renderer.state.bindFramebuffer();
 		Luxe.renderer.state.bindRenderbuffer();
 		
 		head = new Head();
 		
 		originalCamera = Luxe.camera;
+		
+		var r = Luxe.screen.width / Luxe.screen.height;
 		Luxe.camera = new Camera({
 			name: 'head',
 			projection: phoenix.Camera.ProjectionType.perspective,
 			fov: 90, near: 0.1, far: 1000,
-			aspect: Luxe.screen.height / Luxe.screen.width,
+			aspect: Luxe.screen.width / Luxe.screen.height,
 			cull_backfaces: false,
 			depth_test: true,
 		});
@@ -61,26 +65,69 @@ class LuxeGvr {
 		cameras = [
 			new Camera({
 				name: 'left_eye',
-				viewport: new Rectangle(0, 0, stereoTargetSize.x, stereoTargetSize.y),
 				projection: custom,
 				cull_backfaces: false,
 				depth_test: true,
 			}),
 			new Camera({
 				name: 'right_eye',
-				viewport: new Rectangle(stereoTargetSize.x, 0, stereoTargetSize.x, stereoTargetSize.y),
 				projection: custom,
 				cull_backfaces: false,
 				depth_test: true,
 			}),
 		];
+		
+		
 		originalRenderPath = Luxe.renderer.render_path;
 		Luxe.renderer.render_path = renderPath = new GvrRenderPath(Luxe.renderer, Luxe.camera, cameras[0], cameras[1]);
 		
+		trace(
+			Luxe.core.app.runtime.window_width(),
+			Luxe.core.app.runtime.window_height(),
+			Luxe.screen.w,
+			Luxe.screen.h
+		);
+		trace('create monoTarget:', 
+			Luxe.renderer.default_target.width,
+			Luxe.renderer.default_target.height);
+		monoTarget = new MonoRenderTarget(
+			Luxe.renderer.default_target.width,
+			Luxe.renderer.default_target.height,
+			Luxe.renderer.default_target.viewport_scale,
+			Luxe.renderer.default_target.framebuffer,
+			Luxe.renderer.default_target.renderbuffer
+		);
+		Luxe.renderer.target = stereoTarget = new GvrRenderTarget(0, 0);
+		
+		updateViewport();
+		
 		Luxe.on(luxe.Ev.tickstart, ontickstart);
 		Luxe.on(luxe.Ev.postrender, onpostrender);
+		Luxe.on(luxe.Ev.windowresized, function(e:WindowEvent) {
+			monoTarget.width = Std.int(e.x * monoTarget.viewport_scale);
+			monoTarget.height = Std.int(e.y * monoTarget.viewport_scale);
+			Luxe.camera.viewport.set(0, 0, e.x, e.y);
+			Luxe.camera.view.set_perspective({	
+				fov: 90, near: 0.1, far: 1000,
+				aspect: e.x / e.y,
+				cull_backfaces: false,
+				depth_test: true,
+			});
+			// trace('.................', e.y, r, monoTarget.height);
+		});
 	}
 	
+	function updateViewport() {
+		
+		var size = Gvr.swapChainGetBufferSize(swapChain, 0);
+		stereoTarget.width = Std.int(size.width / 2);
+		stereoTarget.height = Std.int(size.height);
+		cameras[0].viewport.set(0, 0, stereoTarget.width, stereoTarget.height);
+		cameras[1].viewport.set(stereoTarget.width, 0, stereoTarget.width, stereoTarget.height);
+		
+	}
+	
+	var prevh:Float;
 	function ontickstart(_) {	
 		Gvr.getRecommendedBufferViewports(context, viewportList);
 		Gvr.bufferViewportListGetItem(viewportList, 0, leftEyeViewport);
@@ -88,6 +135,7 @@ class LuxeGvr {
 		var time = Gvr.getTimePointNow();
 		rawHead = Gvr.getHeadSpaceFromStartSpaceRotation(context, time);
 		
+		// updateViewport();
 		
 		mat4fToMatrix(rawHead, head.raw);
 		head.refresh();
@@ -111,6 +159,7 @@ class LuxeGvr {
 			@:privateAccess Luxe.renderer.state.depth_test = false;
 			
 			frame = Gvr.swapChainAcquireFrame(swapChain);
+			stereoTarget.framebuffer.id = Gvr.frameGetFramebufferObject(frame, 0);
 			Gvr.frameBindBuffer(frame, 0);
 		} else {
 			Luxe.camera.rotation.setFromRotationMatrix(head.inverse);
@@ -142,7 +191,7 @@ class LuxeGvr {
 		Luxe.off(luxe.Ev.tickstart, ontickstart);
 		Luxe.off(luxe.Ev.postrender, onpostrender);
 		Luxe.renderer.render_path = originalRenderPath;
-		Luxe.renderer.target_size.copy_from(monoTargetSize);
+		Luxe.renderer.target = Luxe.renderer.backbuffer;
 	}
 	
 	function mat4fToMatrix(matrix:Mat4f, ?into:Matrix) {
@@ -181,11 +230,47 @@ class LuxeGvr {
 		return renderPath.mode;
 		
 	function set_mode(v) {
-		Luxe.renderer.target_size = switch v {
-			case Mono: monoTargetSize;
-			case Stereo: stereoTargetSize;
+		Luxe.renderer.target = switch v {
+			case Mono: monoTarget;
+			case Stereo: stereoTarget;
 		}
 		return renderPath.mode = v;
+	}
+	
+	function set_orientation(v:Orientation) {
+		if(!landscapeInited) {
+			// HACK: somehow we must init gvr while the device is in landscape orientation
+			// otherwise it doesn't prepare a correctly sized buffer
+			switch v {
+				case Portrait | UpsideDown: // do nothing
+				default:
+					landscapeInited = true;
+					#if !android
+					context = Gvr.create();
+					#end
+					Gvr.initializeGl(context);
+					viewportList = Gvr.bufferViewportListCreate(context);
+					leftEyeViewport = Gvr.bufferViewportCreate(context);
+					rightEyeViewport = Gvr.bufferViewportCreate(context);
+					swapChain = Gvr.swapChainCreate(context, 1);
+					Luxe.renderer.state.bindFramebuffer();
+					Luxe.renderer.state.bindRenderbuffer();
+					
+					updateViewport();
+			}
+		}
+		
+		switch v {
+			case Portrait:
+				head.transform.orientation.makeRotationAxis(new Vector(0, 0, 1), -Math.PI/2);
+			case UpsideDown:
+				head.transform.orientation.makeRotationAxis(new Vector(0, 0, 1), Math.PI/2);
+			case Left:
+				head.transform.orientation.makeRotationAxis(new Vector(0, 0, 1), Math.PI);
+			default:
+				head.transform.orientation.identity();
+		}
+		return orientation = v;
 	}
 }
 
@@ -208,7 +293,14 @@ private class Head {
 	}
 	
 	public function refresh() {
-		matrix.copy(transform.local).multiply(raw).multiply(transform.global);
+		matrix.copy(transform.local).multiply(transform.orientation).multiply(raw).multiply(transform.global);
+		// vec.set_xyz(0, 1, 0).applyProjection(matrix);
+		// trace(vec.x, vec.y, vec.z);
+		// if(vec.y < 0) {
+		// 	matrix.multiply(new Matrix().makeRotationFromQuaternion(new Quaternion().betweenVectors(new Vector(0, -1, 0), vec.set_xyz(0, 0, -1).applyProjection(inverse.getInverse(matrix)))));
+		// }
+
+
 		inverse.getInverse(matrix);
 		
 		var te = inverse.elements;
@@ -223,10 +315,53 @@ private class Head {
 
 private class HeadTransform {
 	public var global(default, null):Matrix; // in world coordinate
+	public var orientation(default, null):Matrix; // in world coordinate
 	public var local(default, null):Matrix; // in rawHead's coordinate
 	
 	public function new() {
 		global = new Matrix();
+		orientation = new Matrix();
 		local = new Matrix();
 	}
+}
+
+@:enum
+abstract Orientation(Int) from Int {
+	var Portrait = 0;
+	var UpsideDown = 1;
+	var Left = 2;
+	var Right = 3;
+}
+
+class GvrRenderTarget implements RenderTarget {
+    public var width: Int;
+    public var height: Int;
+    public var viewport_scale: Float;
+    public var framebuffer: GLFramebuffer;
+    public var renderbuffer: GLRenderbuffer;
+	
+	public function new(width, height) {
+		this.width = width;
+		this.height = height;
+		viewport_scale = 1;
+		framebuffer = new GLFramebuffer(0);
+		renderbuffer = new GLRenderbuffer(0);
+	}
+}
+class MonoRenderTarget implements RenderTarget {
+
+	public var width: Int;
+	public var height: Int;
+	public var viewport_scale: Float;
+	public var framebuffer: GLFramebuffer;
+	public var renderbuffer: GLRenderbuffer;
+
+	public function new(_render_w:Int, _render_h:Int, _render_scale:Float, _fb:GLFramebuffer, _rb:GLRenderbuffer) {
+		width = _render_w;
+		height = _render_h;
+		viewport_scale = _render_scale;
+		framebuffer = _fb;
+		renderbuffer = _rb;
+	}
+
 }
