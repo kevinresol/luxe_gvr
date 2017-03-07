@@ -35,7 +35,7 @@ class LuxeGvr {
 	
 	static var TO_RADIANS = Math.PI / 180;
 	
-	public function new() {
+	public function new(orientation) {
 		
 		#if !android
 		context = Gvr.create();
@@ -48,7 +48,13 @@ class LuxeGvr {
 		Luxe.renderer.state.bindFramebuffer();
 		Luxe.renderer.state.bindRenderbuffer();
 		
+		landscapeInited = switch orientation {
+			case Portrait | UpsideDown: false;
+			default: true;
+		}
+		
 		head = new Head();
+		this.orientation = orientation;
 		
 		originalCamera = Luxe.camera;
 		
