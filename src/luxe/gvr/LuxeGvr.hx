@@ -37,9 +37,7 @@ class LuxeGvr {
 	
 	public function new(orientation) {
 		
-		#if !android
 		context = Gvr.create();
-		#end
 		Gvr.initializeGl(context);
 		viewportList = Gvr.bufferViewportListCreate(context);
 		leftEyeViewport = Gvr.bufferViewportCreate(context);
@@ -95,7 +93,9 @@ class LuxeGvr {
 		);
 		trace('create monoTarget:', 
 			Luxe.renderer.default_target.width,
-			Luxe.renderer.default_target.height);
+			Luxe.renderer.default_target.height
+		);
+			
 		monoTarget = new MonoRenderTarget(
 			Luxe.renderer.default_target.width,
 			Luxe.renderer.default_target.height,
@@ -172,6 +172,7 @@ class LuxeGvr {
 			Luxe.camera.view.depth_test = true;
 		}
 		
+		GL.enable(GL.BLEND);
 		Luxe.renderer.blend_mode(src_alpha, one_minus_src_alpha);
 	}
 	
@@ -251,9 +252,7 @@ class LuxeGvr {
 				case Portrait | UpsideDown: // do nothing
 				default:
 					landscapeInited = true;
-					#if !android
 					context = Gvr.create();
-					#end
 					Gvr.initializeGl(context);
 					viewportList = Gvr.bufferViewportListCreate(context);
 					leftEyeViewport = Gvr.bufferViewportCreate(context);
