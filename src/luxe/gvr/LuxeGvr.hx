@@ -47,7 +47,7 @@ class LuxeGvr {
 		Luxe.renderer.state.bindRenderbuffer();
 		
 		landscapeInited = switch orientation {
-			case Portrait | UpsideDown: false;
+			#if ios case Portrait | UpsideDown: false; #end
 			default: true;
 		}
 		
