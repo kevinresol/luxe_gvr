@@ -181,8 +181,10 @@ class LuxeGvr {
 			Gvr.frameUnbind(frame);
 			Gvr.frameSubmit(frame, viewportList, rawHead);
 			
+			#if ios
 			Luxe.renderer.state.bindFramebuffer();
 			Luxe.renderer.state.bindRenderbuffer();
+			#end
 		}
 	}
 	
