@@ -15,6 +15,7 @@ class LuxeGvr {
 	public var mode(get, set):RenderMode;
 	public var orientation(default, set):Orientation;
 	
+	var destroyed = false;
 	var cameras:Array<Camera>;
 	var context:Context;
 	var viewportList:BufferViewportList;
@@ -177,6 +178,7 @@ class LuxeGvr {
 	}
 	
 	function onpostrender(_) {
+		if(destroyed) return;
 		if(mode == Stereo) {
 			Gvr.frameUnbind(frame);
 			Gvr.frameSubmit(frame, viewportList, rawHead);
@@ -189,9 +191,12 @@ class LuxeGvr {
 	}
 	
 	public function destroy() {
-		// TODO
+		
+		if(destroyed) return;
+		destroyed = true;
+		Gvr.destroy();
 		// Gvr.destroy(RawPointer.addressOf(context.raw));
-		// context = null;
+		context = null;
 		
 		Luxe.camera.destroy();
 		while(cameras.length > 0) cameras.pop().destroy();
